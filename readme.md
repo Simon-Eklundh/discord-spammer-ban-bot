@@ -35,11 +35,11 @@ The idea: set up a channel that regular members have no reason to post in (a "tr
 - `npm run build` — bundle for production
 - `npm start` — run the built version
 
-## Running with Docker
+## Running with Podman
 
 ```
-docker build -f DockerFile -t discord-spammer-banner .
-docker run --env-file .env discord-spammer-banner
+podman build -t discord-spammer-ban-bot .
+podman run --env-file .env discord-spammer-ban-bot
 ```
 
 ## Notes

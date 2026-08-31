@@ -1,0 +1,44 @@
+name: publish
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      # buildah rather than docker/buildx: this project is podman-only, and
+      # buildah reads .containerignore, which Buildx does not.
+      # Note what actually keeps secrets out of this image: the Containerfile
+      # copies only package.json, package-lock.json, tsconfig.json and src --
+      # there is no `COPY . .`. The ignore file is defence in depth. Keep both
+      # that way.
+      - name: Build image
+        id: build
+        uses: redhat-actions/buildah-build@v3
+        with:
+          image: discord-spammer-ban-bot
+          # `latest` moves with every merge. The sha tag is immutable, so a
+          # deployment that needs a fixed version pins that one instead.
+          tags: latest sha-${{ github.sha }}
+          containerfiles: ./Containerfile
+          context: .
+
+      - name: Push to GitHub Container Registry
+        uses: redhat-actions/push-to-registry@v3
+        with:
+          image: ${{ steps.build.outputs.image }}
+          tags: ${{ steps.build.outputs.tags }}
+          registry: ghcr.io/simon-eklundh
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
