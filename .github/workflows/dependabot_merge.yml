@@ -1,0 +1,91 @@
+name: Dependabot auto-merge
+
+on: pull_request_target
+
+permissions:
+  contents: write
+  pull-requests: write
+  # Needed to dispatch the publish workflow below.
+  actions: write
+
+jobs:
+  dependabot:
+    runs-on: ubuntu-latest
+    if: ${{ github.actor == 'dependabot[bot]' }}
+    steps:
+      - name: Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          skip-commit-verification: true
+
+      # No review step: this repo has no ruleset, so no approving review is
+      # required and approving would be ceremony. Majors stay manual.
+      - name: Merge once checks pass
+        if: ${{ steps.metadata.outputs.update-type != 'version-update:semver-major' }}
+        run: |
+          set -euo pipefail
+
+          # Poll the other checks by name rather than using `gh pr checks
+          # --watch`. --watch waits for *every* check on the pull request,
+          # which includes this job, so it waits on itself until the job hits
+          # its timeout. Excluding this workflow's own check is what makes the
+          # wait terminate.
+          #
+          # Polled rather than gated on required checks because nothing is a
+          # required check here: pr-check only runs on pull_request, so
+          # promoting it to required would permanently block direct pushes to
+          # master.
+          # Counted with gh's own --jq so this needs no external jq on the
+          # runner. Emits "<other checks> <failed> <still running>".
+          summary_query='[.[] | select(.name != "dependabot")] as $c
+            | [ ($c | length),
+                ($c | map(select(.state == "FAILURE" or .state == "CANCELLED"
+                                 or .state == "TIMED_OUT" or .state == "ACTION_REQUIRED")) | length),
+                ($c | map(select(.state != "SUCCESS" and .state != "SKIPPED")) | length) ]
+            | join(" ")'
+
+          merged=false
+          for _ in $(seq 1 60); do
+            # gh exits non-zero while checks are still pending, which set -e
+            # would otherwise treat as fatal.
+            summary=$(gh pr checks "$PR_URL" --json name,state --jq "$summary_query" || true)
+            read -r count failed pending <<<"${summary:-0 0 0}"
+
+            if [ "${failed:-0}" -gt 0 ]; then
+              echo "A check did not pass, leaving this pull request open:"
+              gh pr checks "$PR_URL" || true
+              exit 1
+            fi
+
+            # count guards the first poll: before pr-check registers, the
+            # filtered list is empty and nothing is pending, which would
+            # otherwise merge before any check had run.
+            if [ "${count:-0}" -gt 0 ] && [ "${pending:-0}" -eq 0 ]; then
+              merged=true
+              break
+            fi
+
+            sleep 10
+          done
+
+          if [ "$merged" != true ]; then
+            echo "Checks did not finish in time, leaving this pull request open."
+            exit 1
+          fi
+
+          gh pr merge --squash --delete-branch "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # A push made with GITHUB_TOKEN does not trigger other workflows, so the
+      # merge above would land on master without the publish workflow ever running and
+      # the update would never reach the image. workflow_dispatch is the
+      # documented exception to that rule, so ask for the publish explicitly.
+      - name: Publish the merged update
+        if: ${{ steps.metadata.outputs.update-type != 'version-update:semver-major' }}
+        run: gh workflow run publish.yml --ref master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

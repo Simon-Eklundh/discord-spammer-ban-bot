@@ -1,0 +1,22 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 3
+
+  # "docker" is Dependabot's identifier for container base images -- it is not a
+  # choice and cannot be renamed, even though this project builds with buildah.
+  # Confirm it still opens base-image PRs now that the file is Containerfile
+  # rather than Dockerfile; if it goes quiet, that detection is why.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: daily
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: weekly
